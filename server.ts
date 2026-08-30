@@ -7,9 +7,9 @@ import { GoogleGenAI } from '@google/genai';
 
 async function startServer() {
   const app = express();
-  const PORT = process.env.PORT || 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
-  app.use(express.json());
+  app.use(express.json({ limit: '50mb' }));
 
   // File-based store for shifts
   const dataDir = path.join(process.cwd(), 'data');
@@ -117,7 +117,7 @@ Infer exact dates and times relative to month ${month} and year ${year}. Return 
       while (retries > 0) {
         try {
           response = await ai.models.generateContent({
-            model: 'gemini-2.5-flash',
+            model: 'gemini-3.6-flash',
             contents: prompt,
             config: {
                 responseMimeType: 'application/json',
@@ -153,15 +153,12 @@ Infer exact dates and times relative to month ${month} and year ${year}. Return 
     }
   });
 
-  const upload = multer();
-
-  app.post('/api/parse-audio', upload.single('audio'), async (req, res) => {
+  app.post('/api/parse-audio', async (req, res) => {
     try {
-      const { month, year } = req.body;
-      const audioFile = req.file;
+      const { month, year, audioBase64, mimeType } = req.body;
 
-      if (!audioFile) {
-        return res.status(400).json({ success: false, error: 'Audio file is required' });
+      if (!audioBase64) {
+        return res.status(400).json({ success: false, error: 'Audio base64 data is required' });
       }
 
       if (!process.env.GEMINI_API_KEY) {
@@ -194,13 +191,13 @@ CRITICAL DATE ENFORCEMENT:
 Infer exact dates and times relative to month ${month} and year ${year}. Return ONLY valid JSON matching the schema.`;
 
       const response = await ai.models.generateContent({
-        model: 'gemini-2.5-flash',
+        model: 'gemini-3.6-flash',
         contents: [
             {
                 role: 'user',
                 parts: [
                     { text: prompt },
-                    { inlineData: { data: audioFile.buffer.toString("base64"), mimeType: audioFile.mimetype } }
+                    { inlineData: { data: audioBase64, mimeType: mimeType || 'audio/webm' } }
                 ]
             }
         ],

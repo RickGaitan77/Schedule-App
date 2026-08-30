@@ -74,14 +74,25 @@ export default function App() {
   const processAudioBlob = async (audioBlob: Blob) => {
     setIsProcessing(true);
     try {
-      const formData = new FormData();
-      formData.append('audio', audioBlob, 'recording.webm');
-      formData.append('month', month);
-      formData.append('year', year);
+      const base64String = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = () => {
+          const result = reader.result as string;
+          resolve(result.split(',')[1]);
+        };
+        reader.onerror = reject;
+      });
 
       const response = await fetch('/api/parse-audio', {
         method: 'POST',
-        body: formData
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          audioBase64: base64String,
+          mimeType: audioBlob.type || 'audio/webm',
+          month,
+          year
+        })
       });
       
       const data = await response.json();
@@ -319,7 +330,7 @@ export default function App() {
     return daysOff;
   }, [monthWorkingShifts, month, year]);
 
-  const ShiftCard = ({ shift }: { shift: Shift }) => {
+  const ShiftCard = ({ shift }: { shift: Shift, key?: string | number }) => {
     const shiftDate = new Date(shift.start.replace('Z', ''));
     const monthStr = shiftDate.toLocaleDateString('en-US', { month: 'short' });
     const dayStr = shiftDate.toLocaleDateString('en-US', { day: '2-digit' });
