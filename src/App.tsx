@@ -416,7 +416,7 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen h-screen flex flex-col bg-[#020617] text-slate-200 font-sans p-4 md:p-8 overflow-hidden relative selection:bg-emerald-500/30">
+    <div className="min-h-screen h-screen flex flex-col bg-[#020617] text-slate-200 font-sans p-4 pt-[max(env(safe-area-inset-top),1.5rem)] md:p-8 md:pt-8 overflow-hidden relative selection:bg-emerald-500/30">
       {/* Futuristic Background Accents */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none">
         <div className="absolute top-[-10%] left-[-5%] w-[400px] h-[400px] bg-emerald-500/10 rounded-full blur-[120px]"></div>
