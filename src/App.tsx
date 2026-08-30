@@ -11,7 +11,7 @@ type Shift = {
   colorCode: 'blue' | 'red' | 'amber' | 'violet';
 };
 
-const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
 
 export default function App() {
   const [shifts, setShifts] = useState<Shift[]>(() => {
@@ -50,7 +50,7 @@ export default function App() {
   
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   
-  const recognitionRef = useRef<any>(null);
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<BlobPart[]>([]);
   
@@ -69,57 +69,7 @@ export default function App() {
       .catch(console.error);
   }, []);
   
-  useEffect(() => {
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognition.lang = 'en-US';
-      
-      recognition.onresult = (event: any) => {
-        let currentTranscript = '';
-        for (let i = event.resultIndex; i < event.results.length; ++i) {
-          if (event.results[i].isFinal) {
-            currentTranscript += event.results[i][0].transcript + ' ';
-          }
-        }
-        if (currentTranscript) {
-          setTranscript((prev) => (prev ? prev + ' ' : '') + currentTranscript);
-        }
-      };
-      
-      recognition.onerror = (e: any) => {
-        console.error('Speech recognition error:', e.error || e);
-        setIsListening(false);
-        if (e.error === 'not-allowed') {
-          alert('Microphone access was denied. Please allow microphone permissions to use voice input.');
-        } else if (e.error === 'no-speech') {
-          // It's normal to get no-speech if the user is quiet; just silently stop listening.
-        } else if (e.error) {
-          alert(`Speech recognition error: ${e.error}. Try using the text input if this persists.`);
-        }
-      };
-      
-      recognition.onend = () => {
-        if (isListening) {
-          try {
-            recognition.start();
-          } catch (e) {
-            console.error('Failed to restart recognition', e);
-            setIsListening(false);
-          }
-        }
-      };
-      
-      recognitionRef.current = recognition;
-    }
-    
-    return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
-    };
-  }, [isListening]);
+
   
   const processAudioBlob = async (audioBlob: Blob) => {
     setIsProcessing(true);
@@ -165,32 +115,13 @@ export default function App() {
 
   const toggleListening = async () => {
     if (isListening) {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
       if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
         mediaRecorderRef.current.stop();
       }
       setIsListening(false);
     } else {
-      if (recognitionRef.current) {
-        try {
-          recognitionRef.current.start();
-          setIsListening(true);
-          return;
-        } catch (e: any) {
-          console.error('Failed to start recognition, falling back to MediaRecorder:', e);
-          if (e.name === 'InvalidStateError') {
-            setIsListening(true);
-            return;
-          }
-        }
-      }
-      
-      // Fallback to MediaRecorder for iOS Safari and other browsers without SpeechRecognition
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        // Let Safari pick a supported mimeType or default
         const mediaRecorder = new MediaRecorder(stream);
         mediaRecorderRef.current = mediaRecorder;
         audioChunksRef.current = [];
@@ -218,6 +149,14 @@ export default function App() {
   };
   
   const processTranscript = async () => {
+    if (isListening) {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
+      setIsListening(false);
+      return;
+    }
+
     if (!transcript.trim()) return;
     setIsProcessing(true);
     
@@ -603,7 +542,7 @@ export default function App() {
                   
                   <button
                     onClick={processTranscript}
-                    disabled={!transcript.trim() || isProcessing}
+                    disabled={(!transcript.trim() && !isListening) || isProcessing}
                     className="w-full py-4 bg-gradient-to-r from-violet-600 to-emerald-600 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-lg shadow-violet-900/20 active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shrink-0"
                   >
                     {isProcessing ? (
