@@ -117,7 +117,7 @@ Infer exact dates and times relative to month ${month} and year ${year}. Return 
       while (retries > 0) {
         try {
           response = await ai.models.generateContent({
-            model: 'gemini-3.6-flash',
+            model: 'gemini-2.5-flash',
             contents: prompt,
             config: {
                 responseMimeType: 'application/json',
