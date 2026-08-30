@@ -1,0 +1,6 @@
+{
+  "name": "Schedule Sync",
+  "description": "A high-end, futuristic voice-to-schedule sync dashboard.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
