@@ -25,7 +25,24 @@ export default function App() {
   const [isListening, setIsListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
   
+  const handleDirectSync = async () => {
+    setIsSyncing(true);
+    try {
+      const res = await fetch('/api/shifts');
+      const data = await res.json();
+      if (data.success && data.shifts) {
+        setShifts(data.shifts);
+      }
+      await new Promise(resolve => setTimeout(resolve, 800));
+    } catch (e) {
+      console.error('Sync failed:', e);
+    } finally {
+      setIsSyncing(false);
+    }
+  };
+
   const currentMonth = new Date().getMonth() + 1; // 1-12
   const currentYear = new Date().getFullYear();
   const [month, setMonth] = useState(currentMonth.toString());
@@ -190,10 +207,18 @@ export default function App() {
   }
   
   const exportCalendar = () => {
-    if (shifts.length === 0) return;
+    const shiftsToExport = shifts.filter(s => {
+      const d = new Date(s.start.replace('Z', ''));
+      return (d.getMonth() + 1).toString() === month && d.getFullYear().toString() === year;
+    });
+
+    if (shiftsToExport.length === 0) {
+      alert(`No shifts to export for this month.`);
+      return;
+    }
     
     let ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//ScheduleSync//EN\r\n';
-    shifts.forEach(shift => {
+    shiftsToExport.forEach(shift => {
       const start = shift.start.replace('Z', '').replace(/[-:]/g, '').split('.')[0];
       const end = shift.end.replace('Z', '').replace(/[-:]/g, '').split('.')[0];
       
@@ -212,7 +237,8 @@ export default function App() {
     const url = window.URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = 'schedule-sync.ics';
+    const currentMonthName = new Date(0, parseInt(month) - 1).toLocaleString('default', { month: 'long' });
+    a.download = `shifts-${currentMonthName.toLowerCase()}-${year}.ics`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -286,20 +312,20 @@ export default function App() {
     const monthStr = shiftDate.toLocaleDateString('en-US', { month: 'short' });
     const dayStr = shiftDate.toLocaleDateString('en-US', { day: '2-digit' });
     
-    let borderColorClass = 'hover:border-blue-500/40 border-blue-500/20';
+    let borderColorClass = 'border-2 border-blue-400 shadow-[0_0_10px_rgba(96,165,250,0.35)]';
     let textColorClass = 'text-blue-400';
     let label = 'REGULAR';
     
     if (shift.colorCode === 'red') {
-      borderColorClass = 'hover:border-red-500/50 border-red-500/20';
+      borderColorClass = 'border-2 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]';
       textColorClass = 'text-red-400';
       label = 'URGENT';
     } else if (shift.colorCode === 'amber') {
-      borderColorClass = 'hover:border-amber-500/50 border-amber-500/20';
+      borderColorClass = 'border-2 border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.35)]';
       textColorClass = 'text-amber-400';
       label = 'SURGERY';
     } else if (shift.colorCode === 'violet') {
-      borderColorClass = 'hover:border-purple-500/50 border-purple-500/20';
+      borderColorClass = 'border-2 border-purple-400 shadow-[0_0_10px_rgba(192,132,252,0.35)]';
       textColorClass = 'text-purple-400';
       label = 'DROP-OFF';
     }
@@ -312,7 +338,7 @@ export default function App() {
         initial={{ opacity: 0, y: 10, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
-        className={`p-4 bg-slate-800/40 border rounded-2xl flex flex-row items-center gap-4 ${borderColorClass} transition-colors group shadow-lg`}
+        className={`p-4 bg-slate-800/40 rounded-xl flex flex-row items-center gap-4 ${borderColorClass} transition-colors group`}
       >
         <div className="flex flex-col w-14 min-w-[56px] rounded-xl overflow-hidden border border-slate-700/80 shadow-md shrink-0 bg-slate-800/80">
           <div className="bg-red-500/90 text-white text-[9px] font-bold uppercase tracking-widest text-center py-1">
@@ -542,20 +568,23 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-4 mt-auto">
                   <button 
                     onClick={exportCalendar}
-                    disabled={shifts.length === 0}
+                    disabled={monthWorkingShifts.length === 0}
                     className="flex flex-col items-center gap-2 p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl hover:border-emerald-500/50 transition-all group disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <Download className="w-5 h-5 text-emerald-400 group-hover:scale-110 transition-transform" />
-                    <span className="text-[10px] font-mono uppercase text-slate-300">Download .ics</span>
+                    <span className="text-[10px] font-mono uppercase text-slate-300 text-center leading-tight">Export {new Date(0, parseInt(month) - 1).toLocaleString('default', { month: 'long' })} Shifts<br/>(.ics)</span>
                   </button>
                   
                   <button 
-                    disabled
-                    className="flex flex-col items-center gap-2 p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl opacity-50 cursor-not-allowed"
-                    title="Direct API Sync coming soon"
+                    onClick={handleDirectSync}
+                    disabled={isSyncing}
+                    className="flex flex-col items-center gap-2 p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl cursor-pointer group transition-all duration-150 active:scale-95 hover:border-cyan-400/70 hover:bg-cyan-500/10 hover:shadow-[0_0_12px_rgba(34,211,238,0.3)] disabled:opacity-70 disabled:cursor-wait"
+                    title="Direct API Sync"
                   >
-                    <Sparkles className="w-5 h-5 text-violet-400" />
-                    <span className="text-[10px] font-mono uppercase text-slate-300">Direct Sync</span>
+                    <Sparkles className={`w-5 h-5 text-violet-400 transition-colors group-hover:text-cyan-300 ${isSyncing ? 'animate-spin' : ''}`} />
+                    <span className="text-[10px] font-mono uppercase text-slate-300 transition-colors group-hover:text-cyan-300">
+                      {isSyncing ? 'Syncing...' : 'Direct Sync'}
+                    </span>
                   </button>
                 </div>
               </div>
