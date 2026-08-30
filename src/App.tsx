@@ -51,6 +51,8 @@ export default function App() {
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   
   const recognitionRef = useRef<any>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<BlobPart[]>([]);
   
   useEffect(() => {
     localStorage.setItem('schedule_sync_shifts', JSON.stringify(shifts));
@@ -119,27 +121,98 @@ export default function App() {
     };
   }, [isListening]);
   
-  const toggleListening = () => {
-    if (!recognitionRef.current) {
-      alert('Speech Recognition is not supported in this browser.');
-      return;
+  const processAudioBlob = async (audioBlob: Blob) => {
+    setIsProcessing(true);
+    try {
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'recording.webm');
+      formData.append('month', month);
+      formData.append('year', year);
+
+      const response = await fetch('/api/parse-audio', {
+        method: 'POST',
+        body: formData
+      });
+      
+      const data = await response.json();
+      if (data.success) {
+        try {
+          await fetch('/api/shifts', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ shifts: data.shifts })
+          });
+          const res = await fetch('/api/shifts');
+          const finalData = await res.json();
+          if (finalData.success) {
+            setShifts(finalData.shifts);
+            setTranscript(prev => (prev ? prev + '\\n' : '') + '[Audio parsed successfully]');
+          }
+        } catch (e) {
+          console.error("Failed to sync generated shifts:", e);
+        }
+      } else {
+        console.error("Server parse error:", data.error);
+        alert(`Error parsing audio: ${data.error}`);
+      }
+    } catch (error) {
+      console.error("Error sending audio:", error);
+      alert('Error parsing audio. Please try again.');
+    } finally {
+      setIsProcessing(false);
     }
-    
+  };
+
+  const toggleListening = async () => {
     if (isListening) {
-      recognitionRef.current.stop();
+      if (recognitionRef.current) {
+        recognitionRef.current.stop();
+      }
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+      }
       setIsListening(false);
     } else {
-      try {
-        recognitionRef.current.start();
-        setIsListening(true);
-      } catch (e: any) {
-        console.error('Failed to start recognition:', e);
-        if (e.name === 'InvalidStateError') {
-          // Already started, just set state
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.start();
           setIsListening(true);
-        } else {
-          setIsListening(false);
+          return;
+        } catch (e: any) {
+          console.error('Failed to start recognition, falling back to MediaRecorder:', e);
+          if (e.name === 'InvalidStateError') {
+            setIsListening(true);
+            return;
+          }
         }
+      }
+      
+      // Fallback to MediaRecorder for iOS Safari and other browsers without SpeechRecognition
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        // Let Safari pick a supported mimeType or default
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+        
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) {
+            audioChunksRef.current.push(e.data);
+          }
+        };
+
+        mediaRecorder.onstop = () => {
+          const mimeType = mediaRecorder.mimeType || 'audio/webm';
+          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
+          stream.getTracks().forEach(track => track.stop());
+          processAudioBlob(audioBlob);
+        };
+
+        mediaRecorder.start();
+        setIsListening(true);
+      } catch (err: any) {
+        console.error('Microphone access denied or error:', err);
+        alert('Microphone access denied or unavailable. Please check your browser permissions.');
       }
     }
   };
@@ -315,11 +388,13 @@ export default function App() {
     let borderColorClass = 'border-2 border-blue-400 shadow-[0_0_10px_rgba(96,165,250,0.35)]';
     let textColorClass = 'text-blue-400';
     let label = 'REGULAR';
+    let pulseClass = '';
     
     if (shift.colorCode === 'red') {
       borderColorClass = 'border-2 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]';
       textColorClass = 'text-red-400';
       label = 'URGENT';
+      pulseClass = 'animate-pulse';
     } else if (shift.colorCode === 'amber') {
       borderColorClass = 'border-2 border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.35)]';
       textColorClass = 'text-amber-400';
@@ -338,7 +413,7 @@ export default function App() {
         initial={{ opacity: 0, y: 10, scale: 0.98 }}
         animate={{ opacity: 1, y: 0, scale: 1 }}
         exit={{ opacity: 0, scale: 0.95, transition: { duration: 0.2 } }}
-        className={`p-4 bg-slate-800/40 rounded-xl flex flex-row items-center gap-4 ${borderColorClass} transition-colors group`}
+        className={`p-4 bg-slate-800/40 rounded-xl flex flex-row items-center gap-4 ${borderColorClass} transition-colors group ${pulseClass}`}
       >
         <div className="flex flex-col w-14 min-w-[56px] rounded-xl overflow-hidden border border-slate-700/80 shadow-md shrink-0 bg-slate-800/80">
           <div className="bg-red-500/90 text-white text-[9px] font-bold uppercase tracking-widest text-center py-1">
