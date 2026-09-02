@@ -32,8 +32,21 @@ export default function App() {
     try {
       const res = await fetch('/api/shifts');
       const data = await res.json();
-      if (data.success && data.shifts) {
+      if (data.success && data.shifts && data.shifts.length > 0) {
         setShifts(data.shifts);
+      } else {
+        const backup = localStorage.getItem('vet_shifts_backup');
+        if (backup) {
+          const parsedBackup = JSON.parse(backup);
+          if (parsedBackup && parsedBackup.length > 0) {
+            await fetch('/api/shifts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ shifts: parsedBackup })
+            });
+            setShifts(parsedBackup);
+          }
+        }
       }
       await new Promise(resolve => setTimeout(resolve, 800));
     } catch (e) {
@@ -55,18 +68,52 @@ export default function App() {
   const audioChunksRef = useRef<BlobPart[]>([]);
   
   useEffect(() => {
-    localStorage.setItem('schedule_sync_shifts', JSON.stringify(shifts));
+    localStorage.setItem('vet_shifts_backup', JSON.stringify(shifts));
   }, [shifts]);
 
   useEffect(() => {
     fetch('/api/shifts')
       .then(res => res.json())
-      .then(data => {
-        if (data.success && data.shifts) {
+      .then(async data => {
+        if (data.success && data.shifts && data.shifts.length > 0) {
           setShifts(data.shifts);
+        } else {
+          // Server returned empty (e.g. wiped on restart), restore from local backup
+          const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
+          if (backup) {
+            try {
+              const parsedBackup = JSON.parse(backup);
+              if (parsedBackup && parsedBackup.length > 0) {
+                // Send backup data back to the server to restore state seamlessly
+                await fetch('/api/shifts', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ shifts: parsedBackup })
+                });
+                setShifts(parsedBackup);
+                console.log('Restored shifts from local backup to server.');
+              }
+            } catch (e) {
+              console.error('Failed to parse backup shifts:', e);
+            }
+          }
         }
       })
-      .catch(console.error);
+      .catch(err => {
+        console.error('Error fetching shifts:', err);
+        // Fallback gracefully on network failure
+        const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
+        if (backup) {
+          try {
+            const parsedBackup = JSON.parse(backup);
+            if (parsedBackup && parsedBackup.length > 0) {
+              setShifts(parsedBackup);
+            }
+          } catch (e) {
+            console.error('Failed to parse backup shifts:', e);
+          }
+        }
+      });
   }, []);
   
 
