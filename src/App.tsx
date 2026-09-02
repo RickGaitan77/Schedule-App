@@ -64,27 +64,24 @@ export default function App() {
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
   
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioChunksRef = useRef<BlobPart[]>([]);
   
   useEffect(() => {
     localStorage.setItem('vet_shifts_backup', JSON.stringify(shifts));
   }, [shifts]);
 
   useEffect(() => {
+    // Initial fetch to handle backup restoration if server is empty
     fetch('/api/shifts')
       .then(res => res.json())
       .then(async data => {
         if (data.success && data.shifts && data.shifts.length > 0) {
           setShifts(data.shifts);
         } else {
-          // Server returned empty (e.g. wiped on restart), restore from local backup
           const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
           if (backup) {
             try {
               const parsedBackup = JSON.parse(backup);
               if (parsedBackup && parsedBackup.length > 0) {
-                // Send backup data back to the server to restore state seamlessly
                 await fetch('/api/shifts', {
                   method: 'POST',
                   headers: { 'Content-Type': 'application/json' },
@@ -101,7 +98,6 @@ export default function App() {
       })
       .catch(err => {
         console.error('Error fetching shifts:', err);
-        // Fallback gracefully on network failure
         const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
         if (backup) {
           try {
@@ -114,6 +110,23 @@ export default function App() {
           }
         }
       });
+
+    // Real-Time Cross-Device Sync via SSE
+    const eventSource = new EventSource('/api/shifts/stream');
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data.type === 'sync' && Array.isArray(data.shifts)) {
+          setShifts(data.shifts);
+        }
+      } catch (err) {
+        console.error('SSE parsing error:', err);
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
   }, []);
   
 
@@ -171,48 +184,59 @@ export default function App() {
     }
   };
 
-  const toggleListening = async () => {
+  const recognitionRef = useRef<any>(null);
+
+  useEffect(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (SpeechRecognition) {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = true;
+      recognition.interimResults = true;
+      recognitionRef.current = recognition;
+    }
+  }, []);
+
+  const toggleListening = () => {
     if (isListening) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
       setIsListening(false);
     } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-        audioChunksRef.current = [];
+      if (recognitionRef.current) {
+        let finalTranscript = transcript ? transcript + ' ' : '';
         
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
+        recognitionRef.current.onresult = (event: any) => {
+          let interimTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript + ' ';
+            } else {
+              interimTranscript += event.results[i][0].transcript;
+            }
           }
+          setTranscript(finalTranscript + interimTranscript);
         };
 
-        mediaRecorder.onstop = () => {
-          const mimeType = mediaRecorder.mimeType || 'audio/webm';
-          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-          stream.getTracks().forEach(track => track.stop());
-          processAudioBlob(audioBlob);
+        recognitionRef.current.onerror = (event: any) => {
+          console.error('Speech error:', event.error);
+          setIsListening(false);
         };
 
-        mediaRecorder.start();
+        recognitionRef.current.onend = () => {
+          setIsListening(false);
+        };
+
+        recognitionRef.current.start();
         setIsListening(true);
-      } catch (err: any) {
-        console.error('Microphone access denied or error:', err);
-        alert('Microphone access denied or unavailable. Please check your browser permissions.');
+      } else {
+        alert('Web Speech API is not supported in this browser.');
       }
     }
   };
   
   const processTranscript = async () => {
     if (isListening) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
       setIsListening(false);
-      return;
     }
 
     if (!transcript.trim()) return;

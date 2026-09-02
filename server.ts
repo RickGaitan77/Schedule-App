@@ -41,6 +41,30 @@ async function startServer() {
     }
   };
 
+
+  // SSE connections
+  let clients: any[] = [];
+  
+  app.get('/api/shifts/stream', (req, res) => {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    
+    // Send initial state
+    res.write(`data: ${JSON.stringify({ type: 'sync', shifts: shiftsStore })}\n\n`);
+
+    clients.push(res);
+
+    req.on('close', () => {
+      clients = clients.filter(client => client !== res);
+    });
+  });
+
+  const notifyClients = () => {
+    const data = JSON.stringify({ type: 'sync', shifts: shiftsStore });
+    clients.forEach(client => client.write(`data: ${data}\n\n`));
+  };
+
   app.get('/api/shifts', (req, res) => {
     res.json({ success: true, shifts: shiftsStore });
   });
@@ -53,6 +77,7 @@ async function startServer() {
       shiftsStore.unshift(shifts);
     }
     saveShifts();
+    notifyClients();
     res.json({ success: true, shifts: shiftsStore });
   });
 
@@ -61,6 +86,7 @@ async function startServer() {
     const update = req.body;
     shiftsStore = shiftsStore.map(s => s.id === id ? { ...s, ...update } : s);
     saveShifts();
+    notifyClients();
     res.json({ success: true, shifts: shiftsStore });
   });
 
@@ -68,6 +94,7 @@ async function startServer() {
     const { id } = req.params;
     shiftsStore = shiftsStore.filter(s => s.id !== id);
     saveShifts();
+    notifyClients();
     res.json({ success: true });
   });
 
@@ -84,48 +111,44 @@ async function startServer() {
       }
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const prompt = `You are a scheduling assistant. Extract schedule shifts from the following text for month ${month} and year ${year}.
+      const prompt = `Extract schedule shifts from text for month ${month}, year ${year}.
 Text: "${text}"
-
-Return a JSON object with a single 'shifts' array. Each shift object MUST contain:
+Return ONLY a JSON object with a 'shifts' array. Each shift MUST contain:
 - title: string (e.g., "Regular Shift", "Urgent Care", "Night Shift")
-- start: Local datetime string (e.g., "2026-08-28T07:30:00") - DO NOT INCLUDE 'Z'
-- end: Local datetime string (e.g., "2026-08-28T18:00:00") - DO NOT INCLUDE 'Z'
-- details: string (any location, room, or additional details mentioned)
-- colorCode: string (use "blue" for regular, "red" for urgent care/emergency, "amber" for surgery, "violet" for drop-off)
+- start: Local datetime (e.g., "2026-08-28T07:30:00", no 'Z')
+- end: Local datetime (e.g., "2026-08-28T18:00:00", no 'Z')
+- details: string (any location, room, or additional details)
+- colorCode: string ("blue" for regular, "red" for urgent care, "amber" for surgery, "violet" for drop-off)
 
-CRITICAL AM/PM INFERENCE RULES:
-Assume standard daytime clinical hours. For example:
-- "7:30 to 1" means 7:30 AM to 1:00 PM (13:00).
-- "2:30 to 1" means 2:30 PM (14:30) to 1:00 AM the next day, or if they say "2:30 to 11" it means 2:30 PM to 11:00 PM.
-- Single digits like "7 to 5" mean 7:00 AM to 5:00 PM.
-- "7 to 6" means 7:00 AM to 6:00 PM (07:00:00 to 18:00:00).
-Do not assume early morning (e.g., 2:30 AM) unless explicitly stated.
+RULES:
+1. "7 to 5" = 07:00:00 to 17:00:00. "2:30 to 11" = 14:30:00 to 23:00:00. Assume daytime clinical hours.
+2. ALL dates MUST be strictly within month ${month}, year ${year}.
+3. Works for a single day or multiple days equally well.
+Return ONLY valid JSON matching this exact schema.`;
 
-CRITICAL DATE ENFORCEMENT:
-- The user is currently viewing Month: ${month} and Year: ${year}.
-- ALL relative dates mentioned (e.g., "the 1st", "Friday", "Monday through Wednesday") MUST be anchored STRICTLY to this exact Month (${month}) and Year (${year}).
-- Do NOT overflow into previous or future months unless the user explicitly names a different month (e.g., "September 2nd").
-- Example: If the selected month is 8 (August) and the user says "the 5th and the 12th", you MUST return "2026-08-05" and "2026-08-12".
-
-Infer exact dates and times relative to month ${month} and year ${year}. Return ONLY valid JSON matching the schema.`;
-
-      let response;
-      let retries = 3;
+      let response: any;
+      let retries = 5;
       let delay = 1000;
       
       while (retries > 0) {
         try {
-          response = await ai.models.generateContent({
+          const fetchPromise = ai.models.generateContent({
             model: 'gemini-3.6-flash',
             contents: prompt,
             config: {
+                temperature: 0.1,
                 responseMimeType: 'application/json',
             }
           });
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), 8000)
+          );
+
+          response = await Promise.race([fetchPromise, timeoutPromise]);
           break; // Success
         } catch (err: any) {
-          if (err.status === 503 || err.message?.includes('503')) {
+          if (err.message === 'GEMINI_TIMEOUT' || err.status === 503 || err.message?.includes('503') || err.message?.includes('UNAVAILABLE')) {
             retries--;
             if (retries === 0) throw err;
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -135,7 +158,6 @@ Infer exact dates and times relative to month ${month} and year ${year}. Return 
           }
         }
       }
-
       const parsedText = response?.text;
       let shifts = [];
       if (parsedText) {
@@ -166,46 +188,60 @@ Infer exact dates and times relative to month ${month} and year ${year}. Return 
       }
 
       const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-      const prompt = `You are a scheduling assistant. Extract schedule shifts from the provided audio for month ${month} and year ${year}.
-Return a JSON object with a single 'shifts' array. Each shift object MUST contain:
+      const prompt = `Extract schedule shifts from the audio for month ${month}, year ${year}.
+Return ONLY a JSON object with a 'shifts' array. Each shift MUST contain:
 - title: string (e.g., "Regular Shift", "Urgent Care", "Night Shift")
-- start: Local datetime string (e.g., "2026-08-28T07:30:00") - DO NOT INCLUDE 'Z'
-- end: Local datetime string (e.g., "2026-08-28T18:00:00") - DO NOT INCLUDE 'Z'
-- details: string (any location, room, or additional details mentioned)
-- colorCode: string (use "blue" for regular, "red" for urgent care/emergency, "amber" for surgery, "violet" for drop-off)
+- start: Local datetime (e.g., "2026-08-28T07:30:00", no 'Z')
+- end: Local datetime (e.g., "2026-08-28T18:00:00", no 'Z')
+- details: string (any location, room, or additional details)
+- colorCode: string ("blue" for regular, "red" for urgent care, "amber" for surgery, "violet" for drop-off)
 
-CRITICAL AM/PM INFERENCE RULES:
-Assume standard daytime clinical hours. For example:
-- "7:30 to 1" means 7:30 AM to 1:00 PM (13:00).
-- "2:30 to 1" means 2:30 PM (14:30) to 1:00 AM the next day, or if they say "2:30 to 11" it means 2:30 PM to 11:00 PM.
-- Single digits like "7 to 5" mean 7:00 AM to 5:00 PM.
-- "7 to 6" means 7:00 AM to 6:00 PM (07:00:00 to 18:00:00).
-Do not assume early morning (e.g., 2:30 AM) unless explicitly stated.
+RULES:
+1. "7 to 5" = 07:00:00 to 17:00:00. "2:30 to 11" = 14:30:00 to 23:00:00. Assume daytime clinical hours.
+2. ALL dates MUST be strictly within month ${month}, year ${year}.
+3. Works for a single day or multiple days equally well.
+Return ONLY valid JSON matching this exact schema.`;
 
-CRITICAL DATE ENFORCEMENT:
-- The user is currently viewing Month: ${month} and Year: ${year}.
-- ALL relative dates mentioned (e.g., "the 1st", "Friday", "Monday through Wednesday") MUST be anchored STRICTLY to this exact Month (${month}) and Year (${year}).
-- Do NOT overflow into previous or future months unless the user explicitly names a different month (e.g., "September 2nd").
-- Example: If the selected month is 8 (August) and the user says "the 5th and the 12th", you MUST return "2026-08-05" and "2026-08-12".
-
-Infer exact dates and times relative to month ${month} and year ${year}. Return ONLY valid JSON matching the schema.`;
-
-      const response = await ai.models.generateContent({
-        model: 'gemini-3.6-flash',
-        contents: [
-            {
-                role: 'user',
-                parts: [
-                    { text: prompt },
-                    { inlineData: { data: audioBase64, mimeType: mimeType || 'audio/webm' } }
-                ]
+      let response: any;
+      let retries = 5;
+      let delay = 1000;
+      
+      while (retries > 0) {
+        try {
+          const fetchPromise = ai.models.generateContent({
+            model: 'gemini-3.6-flash',
+            contents: [
+                {
+                    role: 'user',
+                    parts: [
+                        { text: prompt },
+                        { inlineData: { data: audioBase64, mimeType: mimeType || 'audio/webm' } }
+                    ]
+                }
+            ],
+            config: {
+                temperature: 0.1,
+                responseMimeType: 'application/json',
             }
-        ],
-        config: {
-            responseMimeType: 'application/json',
-        }
-      });
+          });
+          
+          const timeoutPromise = new Promise((_, reject) => 
+            setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), 12000)
+          );
 
+          response = await Promise.race([fetchPromise, timeoutPromise]);
+          break; // Success
+        } catch (err: any) {
+          if (err.message === 'GEMINI_TIMEOUT' || err.status === 503 || err.message?.includes('503') || err.message?.includes('UNAVAILABLE')) {
+            retries--;
+            if (retries === 0) throw err;
+            await new Promise(resolve => setTimeout(resolve, delay));
+            delay *= 2; // Exponential backoff
+          } else {
+            throw err;
+          }
+        }
+      }
       const parsedText = response?.text;
       let shifts = [];
       if (parsedText) {
