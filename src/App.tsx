@@ -391,18 +391,8 @@ export default function App() {
 
   // Data processing for views
   const dashboardShifts = useMemo(() => {
-    const realToday = new Date();
-    realToday.setHours(0, 0, 0, 0);
-
-    const selectedMonth = parseInt(month, 10);
-    const selectedYear = parseInt(year, 10);
-
-    const isCurrentMonth = (realToday.getMonth() + 1 === selectedMonth) && (realToday.getFullYear() === selectedYear);
-
-    let windowStart = new Date(selectedYear, selectedMonth - 1, 1);
-    if (isCurrentMonth) {
-      windowStart = new Date(realToday);
-    }
+    const windowStart = new Date();
+    windowStart.setHours(0, 0, 0, 0);
 
     const windowEnd = new Date(windowStart);
     windowEnd.setDate(windowStart.getDate() + 7);
@@ -410,10 +400,9 @@ export default function App() {
     
     return shifts.filter(s => {
       const d = new Date(s.start.replace('Z', ''));
-      const isSameMonthYear = (d.getMonth() + 1 === selectedMonth) && (d.getFullYear() === selectedYear);
-      return d >= windowStart && d <= windowEnd && isSameMonthYear;
+      return d >= windowStart && d <= windowEnd;
     }).sort((a,b) => new Date(a.start.replace('Z', '')).getTime() - new Date(b.start.replace('Z', '')).getTime());
-  }, [shifts, month, year]);
+  }, [shifts]);
 
   const monthWorkingShifts = useMemo(() => {
     return shifts.filter(s => {
