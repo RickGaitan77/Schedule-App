@@ -34,7 +34,7 @@ export default function App() {
       const res = await fetch('/api/shifts');
       const data = await res.json();
       if (data.success && data.shifts && data.shifts.length > 0) {
-        setShifts(data.shifts);
+        setShifts(prev => JSON.stringify(prev) === JSON.stringify(data.shifts) ? prev : data.shifts);
       } else {
         const backup = localStorage.getItem('vet_shifts_backup');
         if (backup) {
@@ -76,7 +76,7 @@ export default function App() {
       const data = await res.json();
       
       if (data.success && data.shifts && data.shifts.length > 0) {
-        setShifts(data.shifts);
+        setShifts(prev => JSON.stringify(prev) === JSON.stringify(data.shifts) ? prev : data.shifts);
       } else if (isInitial) {
         // Only attempt to restore from backup on initial load if server is empty
         const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
@@ -124,7 +124,7 @@ export default function App() {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'sync' && Array.isArray(data.shifts)) {
-          setShifts(data.shifts);
+          setShifts(prev => JSON.stringify(prev) === JSON.stringify(data.shifts) ? prev : data.shifts);
         }
       } catch (err) {
         console.error('SSE parsing error:', err);
@@ -174,7 +174,7 @@ export default function App() {
           const res = await fetch('/api/shifts');
           const finalData = await res.json();
           if (finalData.success) {
-            setShifts(finalData.shifts);
+            setShifts(prev => JSON.stringify(prev) === JSON.stringify(finalData.shifts) ? prev : finalData.shifts);
             setTranscript(prev => (prev ? prev + '\\n' : '') + '[Audio parsed successfully]');
           }
         } catch (e) {
