@@ -133,7 +133,7 @@ Return ONLY valid JSON matching this exact schema.`;
       while (retries > 0) {
         try {
           const fetchPromise = ai.models.generateContent({
-            model: 'gemini-3.6-flash',
+            model: 'gemini-3.7-flash',
             contents: prompt,
             config: {
                 temperature: 0.1,
@@ -142,13 +142,13 @@ Return ONLY valid JSON matching this exact schema.`;
           });
           
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), 8000)
+            setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), 25000)
           );
 
           response = await Promise.race([fetchPromise, timeoutPromise]);
           break; // Success
         } catch (err: any) {
-          if (err.message === 'GEMINI_TIMEOUT' || err.status === 503 || err.message?.includes('503') || err.message?.includes('UNAVAILABLE')) {
+          if (err.message === 'GEMINI_TIMEOUT' || err.status === 503 || err.status === 429 || err.message?.includes('503') || err.message?.includes('429') || err.message?.includes('UNAVAILABLE') || err.message?.includes('RESOURCE_EXHAUSTED')) {
             retries--;
             if (retries === 0) throw err;
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -171,7 +171,11 @@ Return ONLY valid JSON matching this exact schema.`;
       res.json({ success: true, shifts });
     } catch (error: any) {
       console.error("Parse error:", error);
-      res.status(500).json({ success: false, error: error.message });
+      let errorMsg = error.message;
+      if (error.status === 429 || errorMsg?.includes('429') || errorMsg?.includes('RESOURCE_EXHAUSTED') || errorMsg?.includes('Quota exceeded')) {
+        errorMsg = 'AI rate limit exceeded. Please wait a minute before trying again.';
+      }
+      res.status(500).json({ success: false, error: errorMsg });
     }
   });
 
@@ -209,7 +213,7 @@ Return ONLY valid JSON matching this exact schema.`;
       while (retries > 0) {
         try {
           const fetchPromise = ai.models.generateContent({
-            model: 'gemini-3.6-flash',
+            model: 'gemini-3.7-flash',
             contents: [
                 {
                     role: 'user',
@@ -226,13 +230,13 @@ Return ONLY valid JSON matching this exact schema.`;
           });
           
           const timeoutPromise = new Promise((_, reject) => 
-            setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), 12000)
+            setTimeout(() => reject(new Error('GEMINI_TIMEOUT')), 35000)
           );
 
           response = await Promise.race([fetchPromise, timeoutPromise]);
           break; // Success
         } catch (err: any) {
-          if (err.message === 'GEMINI_TIMEOUT' || err.status === 503 || err.message?.includes('503') || err.message?.includes('UNAVAILABLE')) {
+          if (err.message === 'GEMINI_TIMEOUT' || err.status === 503 || err.status === 429 || err.message?.includes('503') || err.message?.includes('429') || err.message?.includes('UNAVAILABLE') || err.message?.includes('RESOURCE_EXHAUSTED')) {
             retries--;
             if (retries === 0) throw err;
             await new Promise(resolve => setTimeout(resolve, delay));
@@ -253,7 +257,11 @@ Return ONLY valid JSON matching this exact schema.`;
       res.json({ success: true, shifts });
     } catch (error: any) {
       console.error("Audio parse error:", error);
-      res.status(500).json({ success: false, error: error.message });
+      let errorMsg = error.message;
+      if (error.status === 429 || errorMsg?.includes('429') || errorMsg?.includes('RESOURCE_EXHAUSTED') || errorMsg?.includes('Quota exceeded')) {
+        errorMsg = 'AI rate limit exceeded. Please wait a minute before trying again.';
+      }
+      res.status(500).json({ success: false, error: errorMsg });
     }
   });
 

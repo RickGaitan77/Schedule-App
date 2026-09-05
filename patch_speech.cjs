@@ -1,60 +1,9 @@
 const fs = require('fs');
 let code = fs.readFileSync('src/App.tsx', 'utf-8');
 
-const oldToggleListening = `  const toggleListening = async () => {
-    if (isListening) {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
-      }
-      setIsListening(false);
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-        const mediaRecorder = new MediaRecorder(stream);
-        mediaRecorderRef.current = mediaRecorder;
-        audioChunksRef.current = [];
-        
-        mediaRecorder.ondataavailable = (e) => {
-          if (e.data.size > 0) {
-            audioChunksRef.current.push(e.data);
-          }
-        };
-
-        mediaRecorder.onstop = () => {
-          const mimeType = mediaRecorder.mimeType || 'audio/webm';
-          const audioBlob = new Blob(audioChunksRef.current, { type: mimeType });
-          stream.getTracks().forEach(track => track.stop());
-          processAudioBlob(audioBlob);
-        };
-
-        mediaRecorder.start();
-        setIsListening(true);
-      } catch (err: any) {
-        console.error('Microphone access denied or error:', err);
-        alert('Microphone access denied or unavailable. Please check your browser permissions.');
-      }
-    }
-  };`;
-
-const newToggleListening = `  const recognitionRef = useRef<any>(null);
-
-  useEffect(() => {
-    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (SpeechRecognition) {
-      const recognition = new SpeechRecognition();
-      recognition.continuous = true;
-      recognition.interimResults = true;
-      recognitionRef.current = recognition;
-    }
-  }, []);
-
-  const toggleListening = () => {
-    if (isListening) {
-      if (recognitionRef.current) recognitionRef.current.stop();
-      setIsListening(false);
-    } else {
-      if (recognitionRef.current) {
-        let finalTranscript = transcript ? transcript + ' ' : '';
+// 1. Update toggleListening onresult
+const oldToggleListening = `        let finalTranscript = transcriptRef.current ? transcriptRef.current.value : transcript;
+        if (finalTranscript && !finalTranscript.endsWith(' ')) finalTranscript += ' ';
         
         recognitionRef.current.onresult = (event: any) => {
           let interimTranscript = '';
@@ -65,26 +14,60 @@ const newToggleListening = `  const recognitionRef = useRef<any>(null);
               interimTranscript += event.results[i][0].transcript;
             }
           }
-          setTranscript(finalTranscript + interimTranscript);
-        };
+          if (transcriptRef.current) {
+            transcriptRef.current.value = finalTranscript + interimTranscript;
+            transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+          }
+        };`;
 
-        recognitionRef.current.onerror = (event: any) => {
-          console.error('Speech error:', event.error);
-          setIsListening(false);
-        };
-
-        recognitionRef.current.onend = () => {
-          setIsListening(false);
-        };
-
-        recognitionRef.current.start();
-        setIsListening(true);
-      } else {
-        alert('Web Speech API is not supported in this browser.');
-      }
-    }
-  };`;
+const newToggleListening = `        recognitionRef.current.onresult = (event: any) => {
+          let finalTranscript = '';
+          for (let i = event.resultIndex; i < event.results.length; ++i) {
+            if (event.results[i].isFinal) {
+              finalTranscript += event.results[i][0].transcript + ' ';
+            }
+          }
+          if (finalTranscript && transcriptRef.current) {
+            transcriptRef.current.value += (transcriptRef.current.value ? ' ' : '') + finalTranscript.trim();
+            transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+          }
+        };`;
 
 code = code.replace(oldToggleListening, newToggleListening);
+
+// 2. Update processTranscript month detection
+const oldProcess = `    try {
+      const response = await fetch('/api/parse-voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: textToProcess, month, year })
+      });`;
+
+const newProcess = `    let targetMonth = parseInt(month, 10);
+    const lower = textToProcess.toLowerCase();
+    if (lower.includes('january')) targetMonth = 1;
+    else if (lower.includes('february')) targetMonth = 2;
+    else if (lower.includes('march')) targetMonth = 3;
+    else if (lower.includes('april')) targetMonth = 4;
+    else if (lower.includes('may')) targetMonth = 5;
+    else if (lower.includes('june')) targetMonth = 6;
+    else if (lower.includes('july')) targetMonth = 7;
+    else if (lower.includes('august')) targetMonth = 8;
+    else if (lower.includes('september')) targetMonth = 9;
+    else if (lower.includes('october')) targetMonth = 10;
+    else if (lower.includes('november')) targetMonth = 11;
+    else if (lower.includes('december')) targetMonth = 12;
+
+    try {
+      const response = await fetch('/api/parse-voice', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        // Use the auto-detected month (stringified to match backend expectation if it expects string, but wait, backend expects 1-12 or 0-11?)
+        // Let's pass it as a string to match previous \`month\` state (which is stringified currentMonth)
+        body: JSON.stringify({ text: textToProcess, month: targetMonth.toString(), year })
+      });`;
+
+code = code.replace(oldProcess, newProcess);
+
 fs.writeFileSync('src/App.tsx', code);
-console.log('patched toggleListening');
+console.log('patched');

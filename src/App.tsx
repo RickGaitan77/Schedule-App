@@ -26,6 +26,7 @@ export default function App() {
   const [transcript, setTranscript] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
+  const [statusMsg, setStatusMsg] = useState('');
   
   const handleDirectSync = async () => {
     setIsSyncing(true);
@@ -185,6 +186,7 @@ export default function App() {
   };
 
   const recognitionRef = useRef<any>(null);
+  const transcriptRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
@@ -202,27 +204,28 @@ export default function App() {
       setIsListening(false);
     } else {
       if (recognitionRef.current) {
-        let finalTranscript = transcript ? transcript + ' ' : '';
-        
         recognitionRef.current.onresult = (event: any) => {
-          let interimTranscript = '';
+          let finalTranscript = '';
           for (let i = event.resultIndex; i < event.results.length; ++i) {
             if (event.results[i].isFinal) {
               finalTranscript += event.results[i][0].transcript + ' ';
-            } else {
-              interimTranscript += event.results[i][0].transcript;
             }
           }
-          setTranscript(finalTranscript + interimTranscript);
+          if (finalTranscript && transcriptRef.current) {
+            transcriptRef.current.value += (transcriptRef.current.value ? ' ' : '') + finalTranscript.trim();
+            transcriptRef.current.scrollTop = transcriptRef.current.scrollHeight;
+          }
         };
 
         recognitionRef.current.onerror = (event: any) => {
           console.error('Speech error:', event.error);
           setIsListening(false);
+          if (transcriptRef.current) setTranscript(transcriptRef.current.value);
         };
 
         recognitionRef.current.onend = () => {
           setIsListening(false);
+          if (transcriptRef.current) setTranscript(transcriptRef.current.value);
         };
 
         recognitionRef.current.start();
@@ -239,14 +242,37 @@ export default function App() {
       setIsListening(false);
     }
 
-    if (!transcript.trim()) return;
-    setIsProcessing(true);
+    const textToProcess = transcriptRef.current ? transcriptRef.current.value : transcript;
+    if (!textToProcess.trim()) {
+      setStatusMsg('Please provide some text or speech to process.');
+      return;
+    }
     
+    setIsProcessing(true);
+    setStatusMsg('Processing Neural Feed...');
+    
+    let targetMonth = parseInt(month, 10);
+    const lower = textToProcess.toLowerCase();
+    if (lower.includes('january')) targetMonth = 1;
+    else if (lower.includes('february')) targetMonth = 2;
+    else if (lower.includes('march')) targetMonth = 3;
+    else if (lower.includes('april')) targetMonth = 4;
+    else if (lower.includes('may')) targetMonth = 5;
+    else if (lower.includes('june')) targetMonth = 6;
+    else if (lower.includes('july')) targetMonth = 7;
+    else if (lower.includes('august')) targetMonth = 8;
+    else if (lower.includes('september')) targetMonth = 9;
+    else if (lower.includes('october')) targetMonth = 10;
+    else if (lower.includes('november')) targetMonth = 11;
+    else if (lower.includes('december')) targetMonth = 12;
+
     try {
       const response = await fetch('/api/parse-voice', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: transcript, month, year })
+        // Use the auto-detected month (stringified to match backend expectation if it expects string, but wait, backend expects 1-12 or 0-11?)
+        // Let's pass it as a string to match previous `month` state (which is stringified currentMonth)
+        body: JSON.stringify({ text: textToProcess, month: targetMonth.toString(), year })
       });
       
       const data = await response.json();
@@ -260,14 +286,17 @@ export default function App() {
         } catch (e) {
           console.error('Failed to sync new shifts to server', e);
         }
+        // Instead of overriding, we'll prepend them. SSE will also update this, but doing it optimistically.
         setShifts((prev) => [...data.shifts, ...prev]);
         setTranscript('');
+        if (transcriptRef.current) transcriptRef.current.value = '';
+        setStatusMsg('Successfully processed ' + (data.shifts ? data.shifts.length : 0) + ' shifts.');
       } else {
-        alert('Error parsing shifts: ' + data.error);
+        setStatusMsg('Error parsing shifts: ' + data.error);
       }
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      alert('Network error while processing.');
+      setStatusMsg('Network error while processing: ' + (error.message || 'Unknown error'));
     } finally {
       setIsProcessing(false);
     }
@@ -605,7 +634,7 @@ export default function App() {
                 <div className="flex-1 flex flex-col gap-4 min-h-[220px]">
                   <div className="relative group flex-1 flex flex-col">
                     <textarea
-                      value={transcript}
+                      ref={transcriptRef}
                       onChange={(e) => setTranscript(e.target.value)}
                       className="w-full h-full min-h-[120px] bg-slate-950/50 border border-slate-800 rounded-2xl p-4 pb-14 text-sm text-slate-200 focus:outline-none focus:border-violet-500/50 transition-all placeholder:text-slate-700 resize-none custom-scrollbar"
                       placeholder="PASTE SCHEDULE DATA OR SPEAK..."
@@ -624,7 +653,7 @@ export default function App() {
                   
                   <button
                     onClick={processTranscript}
-                    disabled={(!transcript.trim() && !isListening) || isProcessing}
+                    disabled={isProcessing}
                     className="w-full py-4 bg-gradient-to-r from-violet-600 to-emerald-600 rounded-2xl text-white font-bold uppercase tracking-widest text-xs shadow-lg shadow-violet-900/20 active:scale-[0.98] transition-transform disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shrink-0"
                   >
                     {isProcessing ? (
@@ -633,6 +662,11 @@ export default function App() {
                       'Process Neural Feed'
                     )}
                   </button>
+                  {statusMsg && (
+                    <div className="mt-2 text-center text-xs font-mono text-emerald-400 p-2 bg-slate-900/50 rounded border border-emerald-500/20">
+                      {statusMsg}
+                    </div>
+                  )}
                 </div>
                 
                 <div className="mt-6 pt-6 border-t border-slate-800/50 shrink-0">
