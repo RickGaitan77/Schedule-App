@@ -65,6 +65,23 @@ async function startServer() {
     clients.forEach(client => client.write(`data: ${data}\n\n`));
   };
 
+  // Legacy endpoints for old clients
+  app.get('/api/get-schedule', (req, res) => {
+    res.json({ success: true, shifts: shiftsStore });
+  });
+
+  app.post('/api/update-schedule', (req, res) => {
+    const { shifts } = req.body;
+    if (Array.isArray(shifts)) {
+      shiftsStore = shifts;
+      saveShifts();
+      notifyClients();
+      res.json({ success: true, shifts: shiftsStore });
+    } else {
+      res.status(400).json({ success: false, error: 'Invalid shifts data' });
+    }
+  });
+
   app.get('/api/shifts', (req, res) => {
     res.json({ success: true, shifts: shiftsStore });
   });
