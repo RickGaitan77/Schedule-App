@@ -70,49 +70,55 @@ export default function App() {
     localStorage.setItem('vet_shifts_backup', JSON.stringify(shifts));
   }, [shifts]);
 
-  useEffect(() => {
-    // Initial fetch to handle backup restoration if server is empty
-    fetch('/api/shifts')
-      .then(res => res.json())
-      .then(async data => {
-        if (data.success && data.shifts && data.shifts.length > 0) {
-          setShifts(data.shifts);
-        } else {
-          const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
-          if (backup) {
-            try {
-              const parsedBackup = JSON.parse(backup);
-              if (parsedBackup && parsedBackup.length > 0) {
-                await fetch('/api/shifts', {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({ shifts: parsedBackup })
-                });
-                setShifts(parsedBackup);
-                console.log('Restored shifts from local backup to server.');
-              }
-            } catch (e) {
-              console.error('Failed to parse backup shifts:', e);
-            }
+  const fetchSchedule = async (isInitial = false) => {
+    try {
+      const res = await fetch('/api/shifts');
+      const data = await res.json();
+      
+      if (data.success && data.shifts && data.shifts.length > 0) {
+        setShifts(data.shifts);
+      } else if (isInitial) {
+        // Only attempt to restore from backup on initial load if server is empty
+        const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
+        if (backup) {
+          const parsedBackup = JSON.parse(backup);
+          if (parsedBackup && parsedBackup.length > 0) {
+            await fetch('/api/shifts', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ shifts: parsedBackup })
+            });
+            setShifts(parsedBackup);
+            console.log('Restored shifts from local backup to server.');
           }
         }
-      })
-      .catch(err => {
-        console.error('Error fetching shifts:', err);
+      }
+    } catch (err) {
+      console.error('Error fetching shifts:', err);
+      if (isInitial) {
         const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
         if (backup) {
           try {
             const parsedBackup = JSON.parse(backup);
-            if (parsedBackup && parsedBackup.length > 0) {
-              setShifts(parsedBackup);
-            }
+            if (parsedBackup && parsedBackup.length > 0) setShifts(parsedBackup);
           } catch (e) {
             console.error('Failed to parse backup shifts:', e);
           }
         }
-      });
+      }
+    }
+  };
 
-    // Real-Time Cross-Device Sync via SSE
+  useEffect(() => {
+    // Initial fetch to handle backup restoration if server is empty
+    fetchSchedule(true);
+
+    // 5-second setInterval background polling loop
+    const pollingInterval = setInterval(() => {
+      fetchSchedule(false);
+    }, 5000);
+
+    // Real-Time Cross-Device Sync via SSE (Kept as primary immediate sync)
     const eventSource = new EventSource('/api/shifts/stream');
     eventSource.onmessage = (event) => {
       try {
@@ -126,6 +132,7 @@ export default function App() {
     };
 
     return () => {
+      clearInterval(pollingInterval);
       eventSource.close();
     };
   }, []);
@@ -287,7 +294,11 @@ export default function App() {
           console.error('Failed to sync new shifts to server', e);
         }
         // Instead of overriding, we'll prepend them. SSE will also update this, but doing it optimistically.
-        setShifts((prev) => [...data.shifts, ...prev]);
+        setShifts((prev) => {
+          const prevIds = new Set(prev.map(s => s.id));
+          const toAdd = data.shifts.filter((s: any) => !prevIds.has(s.id));
+          return [...toAdd, ...prev];
+        });
         setTranscript('');
         if (transcriptRef.current) transcriptRef.current.value = '';
         setStatusMsg('Successfully processed ' + (data.shifts ? data.shifts.length : 0) + ' shifts.');
