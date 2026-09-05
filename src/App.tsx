@@ -452,10 +452,10 @@ export default function App() {
     let pulseClass = '';
     
     if (shift.colorCode === 'red') {
-      borderColorClass = 'border-2 border-red-500 shadow-[0_0_10px_rgba(239,68,68,0.4)]';
+      borderColorClass = 'border-2 border-red-500';
       textColorClass = 'text-red-400';
       label = 'URGENT';
-      pulseClass = 'animate-pulse';
+      pulseClass = 'animate-pulse-shadow-urgent';
     } else if (shift.colorCode === 'amber') {
       borderColorClass = 'border-2 border-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.35)]';
       textColorClass = 'text-amber-400';
