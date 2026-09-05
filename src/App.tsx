@@ -15,8 +15,16 @@ type Shift = {
 
 export default function App() {
   const [shifts, setShifts] = useState<Shift[]>(() => {
-    const saved = localStorage.getItem('schedule_sync_shifts');
-    return saved ? JSON.parse(saved) : [];
+    try {
+      const saved = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch (e) {
+      console.error('Failed to parse initial shifts:', e);
+    }
+    return [];
   });
   
   const [activeTab, setActiveTab] = useState<'dashboard' | 'schedule'>('dashboard');
@@ -77,36 +85,52 @@ export default function App() {
       
       if (data.success && data.shifts && data.shifts.length > 0) {
         setShifts(prev => JSON.stringify(prev) === JSON.stringify(data.shifts) ? prev : data.shifts);
-        localStorage.setItem('vet_shifts_backup', JSON.stringify(data.shifts));
+        try {
+          localStorage.setItem('vet_shifts_backup', JSON.stringify(data.shifts));
+        } catch (e) {}
       } else {
         // Server returned an empty list - restore from local backup immediately
-        const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
-        if (backup) {
-          const parsedBackup = JSON.parse(backup);
-          if (parsedBackup && parsedBackup.length > 0) {
-            await fetch('/api/shifts', {
+        let parsedBackup = null;
+        try {
+          const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
+          if (backup) {
+            parsedBackup = JSON.parse(backup);
+          }
+        } catch (e) {
+          console.error('Failed to parse backup shifts:', e);
+        }
+
+        if (parsedBackup && Array.isArray(parsedBackup) && parsedBackup.length > 0) {
+          try {
+            await fetch('/api/update-schedule', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ shifts: parsedBackup })
             });
             setShifts(prev => JSON.stringify(prev) === JSON.stringify(parsedBackup) ? prev : parsedBackup);
             console.log('Restored shifts from local backup to server.');
+          } catch (err) {
+            console.error('Failed to send backup to server:', err);
+            setShifts(prev => JSON.stringify(prev) === JSON.stringify(parsedBackup) ? prev : parsedBackup);
           }
+        } else if (isInitial) {
+           // Ensure it doesn't stay stuck
+           setShifts([]);
         }
       }
     } catch (err) {
       console.error('Error fetching shifts:', err);
       // Always fallback to local backup on error
-      const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
-      if (backup) {
-        try {
+      try {
+        const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
+        if (backup) {
           const parsedBackup = JSON.parse(backup);
-          if (parsedBackup && parsedBackup.length > 0) {
+          if (parsedBackup && Array.isArray(parsedBackup) && parsedBackup.length > 0) {
             setShifts(prev => JSON.stringify(prev) === JSON.stringify(parsedBackup) ? prev : parsedBackup);
           }
-        } catch (e) {
-          console.error('Failed to parse backup shifts:', e);
         }
+      } catch (e) {
+        console.error('Failed to parse backup shifts:', e);
       }
     }
   };
