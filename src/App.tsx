@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
-import { Mic, Square, Download, Calendar as CalendarIcon, Clock, Trash2, ShieldAlert, Sparkles, Loader2, CheckCircle2, LayoutDashboard, CalendarDays, Edit2, X } from 'lucide-react';
+import { Mic, Square, Download, Calendar as CalendarIcon, Clock, Trash2, ShieldAlert, Sparkles, Loader2, CheckCircle2, LayoutDashboard, CalendarDays, Edit2, X , Smartphone} from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 type Shift = {
@@ -36,34 +36,7 @@ export default function App() {
   const [isSyncing, setIsSyncing] = useState(false);
   const [statusMsg, setStatusMsg] = useState('');
   
-  const handleDirectSync = async () => {
-    setIsSyncing(true);
-    try {
-      const res = await fetch('/api/shifts');
-      const data = await res.json();
-      if (data.success && data.shifts && data.shifts.length > 0) {
-        setShifts(prev => JSON.stringify(prev) === JSON.stringify(data.shifts) ? prev : data.shifts);
-      } else {
-        const backup = localStorage.getItem('vet_shifts_backup');
-        if (backup) {
-          const parsedBackup = JSON.parse(backup);
-          if (parsedBackup && parsedBackup.length > 0) {
-            await fetch('/api/shifts', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ shifts: parsedBackup })
-            });
-            setShifts(parsedBackup);
-          }
-        }
-      }
-      await new Promise(resolve => setTimeout(resolve, 800));
-    } catch (e) {
-      console.error('Sync failed:', e);
-    } finally {
-      setIsSyncing(false);
-    }
-  };
+
 
   const currentMonth = new Date().getMonth() + 1; // 1-12
   const currentYear = new Date().getFullYear();
@@ -74,120 +47,72 @@ export default function App() {
   
 
   
+
+  const [showQrModal, setShowQrModal] = useState(false);
+  const [syncAlert, setSyncAlert] = useState(false);
+
   useEffect(() => {
     localStorage.setItem('vet_shifts_backup', JSON.stringify(shifts));
   }, [shifts]);
 
-  const fetchSchedule = async (isInitial = false) => {
-    // 1. Instant Cache Display on Launch
-    if (isInitial) {
+  useEffect(() => {
+    const hash = window.location.hash;
+    if (hash.startsWith('#sync=')) {
       try {
-        const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
-        if (backup) {
-          const parsedBackup = JSON.parse(backup);
-          if (parsedBackup && Array.isArray(parsedBackup) && parsedBackup.length > 0) {
-            setShifts(prev => JSON.stringify(prev) === JSON.stringify(parsedBackup) ? prev : parsedBackup);
-            console.log('Instant Cache Display on Launch triggered.');
-          }
-        }
+        const encodedData = hash.substring(6);
+        const decodedData = JSON.parse(decodeURIComponent(atob(encodedData)));
+        
+        // Restore from minified
+        const restoredShifts = decodedData.map((s: any) => ({
+          id: s.i || Date.now().toString() + Math.random().toString(),
+          start: s.s,
+          end: s.e,
+          title: s.t,
+          details: s.d || '',
+          colorCode: s.c || 'blue'
+        }));
+
+        localStorage.setItem('vet_shifts_backup', JSON.stringify(restoredShifts));
+        setShifts(restoredShifts);
+        
+        window.history.replaceState(null, '', window.location.pathname);
+        setSyncAlert(true);
+        setTimeout(() => setSyncAlert(false), 3000);
       } catch (e) {
-        console.error('Failed instant cache load:', e);
+        console.error('Failed to parse synced shifts:', e);
       }
     }
-
-    try {
-      // 2. Fetch in the background using the requested endpoint
-      const res = await fetch('/api/get-schedule');
-      const data = await res.json();
-      
-      if (data.success && data.shifts && data.shifts.length > 0) {
-        setShifts(prev => {
-          const isSame = JSON.stringify(prev) === JSON.stringify(data.shifts);
-          // 3. Save Shifts During Polling if differs
-          if (!isSame) {
-            try {
-              localStorage.setItem('vet_shifts_backup', JSON.stringify(data.shifts));
-            } catch (e) {}
-          }
-          return isSame ? prev : data.shifts;
-        });
-      } else {
-        // Server returned an empty list - restore from local backup immediately
-        let parsedBackup = null;
-        try {
-          const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
-          if (backup) {
-            parsedBackup = JSON.parse(backup);
-          }
-        } catch (e) {
-          console.error('Failed to parse backup shifts:', e);
-        }
-
-        // Re-seed Wiped Server
-        if (parsedBackup && Array.isArray(parsedBackup) && parsedBackup.length > 0) {
-          try {
-            await fetch('/api/update-schedule', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ shifts: parsedBackup })
-            });
-            setShifts(prev => JSON.stringify(prev) === JSON.stringify(parsedBackup) ? prev : parsedBackup);
-            console.log('Restored shifts from local backup to server.');
-          } catch (err) {
-            console.error('Failed to send backup to server:', err);
-            setShifts(prev => JSON.stringify(prev) === JSON.stringify(parsedBackup) ? prev : parsedBackup);
-          }
-        } else if (isInitial) {
-           setShifts([]);
-        }
-      }
-    } catch (err) {
-      console.error('Error fetching shifts:', err);
-      // Always fallback to local backup on error
-      try {
-        const backup = localStorage.getItem('vet_shifts_backup') || localStorage.getItem('schedule_sync_shifts');
-        if (backup) {
-          const parsedBackup = JSON.parse(backup);
-          if (parsedBackup && Array.isArray(parsedBackup) && parsedBackup.length > 0) {
-            setShifts(prev => JSON.stringify(prev) === JSON.stringify(parsedBackup) ? prev : parsedBackup);
-          }
-        }
-      } catch (e) {
-        console.error('Failed to parse backup shifts:', e);
-      }
-    }
-  };
+  }, []);
 
   useEffect(() => {
-    // Initial fetch to handle backup restoration if server is empty
-    fetchSchedule(true);
-
-    // 5-second setInterval background polling loop
-    const pollingInterval = setInterval(() => {
-      fetchSchedule(false);
-    }, 5000);
-
-    // Real-Time Cross-Device Sync via SSE (Kept as primary immediate sync)
-    const eventSource = new EventSource('/api/shifts/stream');
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'sync' && Array.isArray(data.shifts)) {
-          setShifts(prev => JSON.stringify(prev) === JSON.stringify(data.shifts) ? prev : data.shifts);
-        }
-      } catch (err) {
-        console.error('SSE parsing error:', err);
+    if (showQrModal) {
+      const qrContainer = document.getElementById('qrcode');
+      if (qrContainer && (window as any).QRCode) {
+        qrContainer.innerHTML = '';
+        const minified = shifts.map(s => ({
+          i: s.id.substring(0, 8), // just a short id
+          s: s.start,
+          e: s.end,
+          t: s.title,
+          c: s.colorCode,
+          d: s.details
+        }));
+        
+        const encoded = btoa(encodeURIComponent(JSON.stringify(minified)));
+        const syncUrl = window.location.origin + window.location.pathname + '#sync=' + encoded;
+        
+        new (window as any).QRCode(qrContainer, {
+          text: syncUrl,
+          width: 240,
+          height: 240,
+          colorDark: "#000000",
+          colorLight: "#ffffff",
+          correctLevel: (window as any).QRCode.CorrectLevel.L
+        });
       }
-    };
+    }
+  }, [showQrModal, shifts]);
 
-    return () => {
-      clearInterval(pollingInterval);
-      eventSource.close();
-    };
-  }, []);
-  
-
-  
   const processAudioBlob = async (audioBlob: Blob) => {
     setIsProcessing(true);
     try {
@@ -215,19 +140,14 @@ export default function App() {
       const data = await response.json();
       if (data.success) {
         try {
-          await fetch('/api/shifts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shifts: data.shifts })
+          setShifts(prev => {
+            const combined = [...data.shifts, ...prev];
+            const unique = Array.from(new Map(combined.map(item => [item.id, item])).values()) as Shift[];
+            return unique;
           });
-          const res = await fetch('/api/shifts');
-          const finalData = await res.json();
-          if (finalData.success) {
-            setShifts(prev => JSON.stringify(prev) === JSON.stringify(finalData.shifts) ? prev : finalData.shifts);
-            setTranscript(prev => (prev ? prev + '\\n' : '') + '[Audio parsed successfully]');
-          }
+          setTranscript(prev => (prev ? prev + '\n' : '') + '[Audio parsed successfully]');
         } catch (e) {
-          console.error("Failed to sync generated shifts:", e);
+          console.error("Failed to apply generated shifts:", e);
         }
       } else {
         console.error("Server parse error:", data.error);
@@ -333,15 +253,7 @@ export default function App() {
       
       const data = await response.json();
       if (data.success) {
-        try {
-          await fetch('/api/shifts', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ shifts: data.shifts })
-          });
-        } catch (e) {
-          console.error('Failed to sync new shifts to server', e);
-        }
+        // No server sync needed, it's local only
         // Instead of overriding, we'll prepend them. SSE will also update this, but doing it optimistically.
         setShifts((prev) => {
           const prevIds = new Set(prev.map(s => s.id));
@@ -757,14 +669,13 @@ export default function App() {
                   </button>
                   
                   <button 
-                    onClick={handleDirectSync}
-                    disabled={isSyncing}
-                    className="flex flex-col items-center gap-2 p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl cursor-pointer group transition-all duration-150 active:scale-95 hover:border-cyan-400/70 hover:bg-cyan-500/10 hover:shadow-[0_0_12px_rgba(34,211,238,0.3)] disabled:opacity-70 disabled:cursor-wait"
-                    title="Direct API Sync"
+                    onClick={() => setShowQrModal(true)}
+                    className="flex flex-col items-center gap-2 p-3 bg-slate-800/50 border border-slate-700/50 rounded-xl cursor-pointer group transition-all duration-150 active:scale-95 hover:border-cyan-400/70 hover:bg-cyan-500/10 hover:shadow-[0_0_12px_rgba(34,211,238,0.3)]"
+                    title="Sync to Phone"
                   >
-                    <Sparkles className={`w-5 h-5 text-violet-400 transition-colors group-hover:text-cyan-300 ${isSyncing ? 'animate-spin' : ''}`} />
-                    <span className="text-[10px] font-mono uppercase text-slate-300 transition-colors group-hover:text-cyan-300">
-                      {isSyncing ? 'Syncing...' : 'Direct Sync'}
+                    <Smartphone className="w-5 h-5 text-violet-400 transition-colors group-hover:text-cyan-300" />
+                    <span className="text-[10px] font-mono uppercase text-slate-300 transition-colors group-hover:text-cyan-300 text-center leading-tight">
+                      Sync to Phone<br/>(QR Code)
                     </span>
                   </button>
                 </div>
